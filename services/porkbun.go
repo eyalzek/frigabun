@@ -56,7 +56,8 @@ type PorkbunApiRequest struct {
 type PorkbunQueryResponse struct {
 	Status  string `json:"status"`
 	Records []struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Content string `json:"content"`
 	} `json:"records"`
 }
 
@@ -73,10 +74,15 @@ func (p *PorkbunDnsUpdateService) UpdateRecord(request *DynDnsRequest) error {
 	logger := log.With().Str("func", "UpdateRecord").Str("registrar", "porkbun").Str("domain", request.Domain).Str("subdomain", request.Subdomain).Logger()
 	logger.Info().Msg("building update request")
 
-	exists, err := p.queryRecordExists(request, porkbunRequest)
+	exists, fullmatch, err := p.queryRecordExists(request, porkbunRequest)
 	if err != nil {
 		logger.Err(err).Msg("error querying if record exists")
 		return err
+	}
+
+	if fullmatch {
+		logger.Info().Msg("record exists and is up to date, skipping")
+		return nil
 	}
 
 	if exists {
@@ -103,7 +109,7 @@ func (p *PorkbunDnsUpdateService) UpdateRecord(request *DynDnsRequest) error {
 	return nil
 }
 
-func (p *PorkbunDnsUpdateService) queryRecordExists(request *DynDnsRequest, porkbunRequest *PorkbunApiRequest) (bool, error) {
+func (p *PorkbunDnsUpdateService) queryRecordExists(request *DynDnsRequest, porkbunRequest *PorkbunApiRequest) (bool, bool, error) {
 	endpoint := fmt.Sprintf("%s/dns/retrieveByNameType/%s/A/%s", p.baseUrl, request.Domain, request.Subdomain)
 
 	logger := log.With().Str("func", "createRecord").Str("registrar", "porkbun").Str("subdomain", request.Subdomain).Str("endpoint", endpoint).Str("IP", request.IP).Logger()
@@ -113,7 +119,7 @@ func (p *PorkbunDnsUpdateService) queryRecordExists(request *DynDnsRequest, pork
 
 	resp, err := p.executeRequest(endpoint, porkbunRequest)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	b, _ := io.ReadAll(resp.Body)
@@ -121,28 +127,36 @@ func (p *PorkbunDnsUpdateService) queryRecordExists(request *DynDnsRequest, pork
 
 	if resp.StatusCode != http.StatusOK || r.Status != "SUCCESS" || err != nil {
 		logger.Error().Bytes("response", b).Msg(ErrRegistrarRejectedRequest.Error())
-		return false, ErrRegistrarRejectedRequest
+		return false, false, ErrRegistrarRejectedRequest
 	}
+
+	found := false
+	fullMatch := false
 
 	if r.Status == "SUCCESS" && len(r.Records) > 0 {
 		for _, e := range r.Records {
 			logger.Info().Msg("record found")
 
-			var match string
+			var expected string
 			if request.Subdomain == "" {
-				match = request.Domain
+				expected = request.Domain
 			} else {
-				match = fmt.Sprintf("%s.%s", request.Subdomain, request.Domain)
+				expected = fmt.Sprintf("%s.%s", request.Subdomain, request.Domain)
 			}
 
-			if e.Name == match {
-				return true, nil
+			if e.Name == expected {
+				found = true
+			}
+
+			if e.Name == expected && e.Content == request.IP {
+				fullMatch = true
 			}
 		}
 	}
 
-	logger.Info().Msg("record not found")
-	return false, nil
+	log.Info().Bool("record_found", found).Bool("full_match", fullMatch).Msg("query result")
+
+	return found, fullMatch, nil
 }
 
 func (p *PorkbunDnsUpdateService) createRecord(request *DynDnsRequest, porkbunRequest *PorkbunApiRequest) error {

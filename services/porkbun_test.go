@@ -72,7 +72,8 @@ func TestPorkbunDnsUpdateService_UpdateRecord_ApiError(t *testing.T) {
 	resp := &services.PorkbunQueryResponse{
 		Status: "ERROR",
 		Records: []struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Content string `json:"content"`
 		}{},
 	}
 
@@ -109,8 +110,9 @@ func TestPorkbunDnsUpdateService_UpdateRecord_Exists_Success(t *testing.T) {
 	queryResp := &services.PorkbunQueryResponse{
 		Status: "SUCCESS",
 		Records: []struct {
-			Name string `json:"name"`
-		}{{Name: "bar.foo.com"}},
+			Name    string `json:"name"`
+			Content string `json:"content"`
+		}{{Name: "bar.foo.com", Content: "1.2.3.5"}},
 	}
 
 	jsonBytes, err := json.Marshal(queryResp)
@@ -144,6 +146,44 @@ func TestPorkbunDnsUpdateService_UpdateRecord_Exists_Success(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+func TestPorkbunDnsUpdateService_UpdateRecord_Exists_With_Matching_IP_Skipping(t *testing.T) {
+	setupPorkbunConfig()
+	h := mockservices.NewMockHTTPClient(t)
+
+	queryResp := &services.PorkbunQueryResponse{
+		Status: "SUCCESS",
+		Records: []struct {
+			Name    string `json:"name"`
+			Content string `json:"content"`
+		}{{Name: "bar.foo.com", Content: "1.2.3.4"}},
+	}
+
+	jsonBytes, err := json.Marshal(queryResp)
+	if err != nil {
+		t.Fatal()
+	}
+
+	h.On("Do", mock.Anything).Return(&http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(jsonBytes)),
+	}, nil).Once()
+
+	registrar, err := services.NewPorkbunDnsUpdateService(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dynReq := &services.DynDnsRequest{
+		Subdomain: "bar",
+		Domain:    "foo.com",
+		IP:        "1.2.3.4",
+	}
+
+	err = registrar.UpdateRecord(dynReq)
+
+	assert.Nil(t, err)
+}
+
 func TestPorkbunDnsUpdateService_UpdateRecord_Exists_Failure_On_Update(t *testing.T) {
 	setupPorkbunConfig()
 	h := mockservices.NewMockHTTPClient(t)
@@ -151,7 +191,8 @@ func TestPorkbunDnsUpdateService_UpdateRecord_Exists_Failure_On_Update(t *testin
 	queryResp := &services.PorkbunQueryResponse{
 		Status: "SUCCESS",
 		Records: []struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Content string `json:"content"`
 		}{{Name: "bar.foo.com"}},
 	}
 
@@ -193,7 +234,8 @@ func TestPorkbunDnsUpdateService_UpdateRecord_NotExists_Failure_On_Create(t *tes
 	queryResp := &services.PorkbunQueryResponse{
 		Status: "SUCCESS",
 		Records: []struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Content string `json:"content"`
 		}{},
 	}
 
